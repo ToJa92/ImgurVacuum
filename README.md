@@ -27,7 +27,7 @@ You are welcome to submit a patch to add support for multiple channels, web admi
 
 With that in mind, the configuration process is fairly simple. Let's start in the terminal:
 ```
-git clone https://github.com/ToJa92/ImgurVacuum
+git clone https://github.com/ToJa92/ImgurVacuum.git
 cd ImgurVacuum
 cp imgurvacuum.py <your ZNC module folder here>
 ```
