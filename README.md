@@ -2,6 +2,8 @@ ImgurVacuum
 ===========
 
 A ZNC module that will monitor a IRC channel, save imgur links with titles to a SQLite database and print the title to the channel.
+Particularly useful in conjunction with a web page that reads the database and presents the results.
+I'm not very good at all writing Python, so it's a mess right now. It works for me.
 
 Hard requirements
 -----------
@@ -48,7 +50,6 @@ The DATE column will contain a UNIX timestamp which will allow you to convert it
 In your IRC client, connect to the network where you want to monitor for Imgur links. Then:
 ```
 /msg *status loadmod imgurvacuum
-/msg *imgurvacuum help
 ```
 
 And follow the instructions.
