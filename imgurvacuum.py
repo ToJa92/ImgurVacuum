@@ -139,7 +139,12 @@ help || will print this message again.'''
                         continue
                     fetch = self.fetch_youtube(parsed_query_string["v"][0])
                     if fetch["success"]:
-                        self.msg_channel("YouTube: %s"%fetch["response"].json()["items"][0]["snippet"]["title"])
+                        video_items = fetch["response"].json()["items"]
+                        if len(video_items) > 0:
+                            self.msg_channel("YouTube: %s"%video_items[0]["snippet"]["title"])
+                        else:
+                            self.msg_channel("Could not find the video.")
+                            self.PutModule("failed on %s"%str(parsed_url))
                     else:
                         self.msg_channel(fetch["response"])
         return znc.CONTINUE
