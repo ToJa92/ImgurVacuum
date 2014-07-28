@@ -21,14 +21,20 @@ import requests
 import re
 import sqlite3
 import time
+from urllib.parse import urlparse, parse_qs
 
 class imgurvacuum(znc.Module):
     # A small function for supporting "helpers" that work the magic in the background.
     # Can take an optional string which is a specific "helper" to refresh.
     def refresh_helpers(self, specific_helper=None):
-        if (specific_helper and specific_helper == "client_id") or "client_id" in self.nv: self.im = pyimgur.Imgur(self.nv["client_id"])
-        if (specific_helper and specific_helper == "sqlite_path") or "sqlite_path" in self.nv: self.linkdb = sqlite3.connect(self.nv["sqlite_path"])
-        if (specific_helper and specific_helper == "channel") or "channel" in self.nv: self.channel = self.nv["channel"]
+        if (specific_helper and specific_helper == "client_id") or "client_id" in self.nv:
+            self.im = pyimgur.Imgur(self.nv["client_id"])
+        if (specific_helper and specific_helper == "youtube_api_key") or "youtube_api_key" in self.nv:
+            self.youtube_api_key = self.nv["youtube_api_key"]
+        if (specific_helper and specific_helper == "sqlite_path") or "sqlite_path" in self.nv:
+            self.linkdb = sqlite3.connect(self.nv["sqlite_path"])
+        if (specific_helper and specific_helper == "channel") or "channel" in self.nv:
+            self.channel = self.nv["channel"]
 
     def OnLoad(self, args, retmsg):
         # TODO: Ask user whether a database should be created or not.
@@ -47,6 +53,7 @@ You won't see this message again.'''
             self.nv['first_time'] = 'false' # ZNC can only save strings
         # A regex for capturing URLs
         self.urlRegex = re.compile(r"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'\".,<>?«»“”‘’]))", re.IGNORECASE | re.DOTALL)
+        # URL for getting YouTube
         # The "helpers" need to be refreshed
         self.refresh_helpers()
         return True
@@ -59,7 +66,7 @@ You won't see this message again.'''
         return znc.CONTINUE
 
     def OnModCommand(self, msg):
-        for i in ["client_id", "channel", "sqlite_path"]:
+        for i in ["client_id", "youtube_api_key", "channel", "sqlite_path"]:
             if msg.startswith(i):
                 self.nv[i] = msg.split()[1]
                 self.PutModule("Updated "+i+" to: "+self.nv[i])
@@ -72,6 +79,7 @@ The new value will be printed, so you should be able to spot mistakes.
 
 Commands (they take either 0 or 1 argument, argument is between ||):
 client_id |<imgur client_id>| will update the Imgur client_id
+youtube_api_key |<youtube api key>| will update the YouTube API key
 channel |#<channel>| will update the monitored channel name. Note that # should be included.
 sqlite_path |/path/to/db.sqlite| will update the path to the SQLite database.
 help || will print this message again.'''
@@ -80,7 +88,10 @@ help || will print this message again.'''
         return znc.CONTINUE
 
     def OnChanMsg(self, nick, channel, message):
-        if not ("client_id" in self.nv and "channel" in self.nv and "sqlite_path" in self.nv):
+        if not ("client_id" in self.nv and
+                "youtube_api_key" in self.nv and
+                "channel" in self.nv and
+                "sqlite_path" in self.nv):
             self.PutModule('Error: This module requires configuration. Send "help" to me and I\'ll send you instructions back.')
             return znc.CONTINUE
 
@@ -120,10 +131,31 @@ help || will print this message again.'''
                             self.msg_channel("Imgur: %s" % db_entry[3])
                         else:
                             self.msg_channel("No Imgur title available")
+                elif len(i) > 0 and i.find("youtube") != -1:
+                    parsed_url = urlparse(i)
+                    parsed_query_string = parse_qs(parsed_url.query)
+                    # Is the "v" query parameter missing in the URL?
+                    if "v" not in parsed_query_string:
+                        continue
+                    fetch = self.fetch_youtube(parsed_query_string["v"][0])
+                    if fetch["success"]:
+                        self.msg_channel("YouTube: %s"%fetch["response"].json()["items"][0]["snippet"]["title"])
+                    else:
+                        self.msg_channel(fetch["response"])
         return znc.CONTINUE
 
     def msg_channel(self, msg):
         self.PutIRC("PRIVMSG "+self.nv["channel"]+" :%s" % str(msg))
+
+    def fetch_youtube(self, video_id):
+        query_url = "https://www.googleapis.com/youtube/v3/videos?part=snippet&id=%s&key=%s" % (video_id, self.nv["youtube_api_key"])
+        response = requests.get(query_url)
+        if response.status_code == 200:
+            return {"success": True,
+                    "response": response}
+        else:
+            return {"success": False,
+                    "response": "Error getting response from YouTube."}
 
     def fetch_imgur(self, url):
         try:
