@@ -1,6 +1,6 @@
 '''
 ImgurVacuum - Monitors a IRC channel for imgur links, saves them and prints the title.
-Copyright (C) 2013 Tobias Jansson
+Copyright (C) 2014 Tobias Jansson
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -33,11 +33,11 @@ class imgurvacuum(znc.Module):
     def OnLoad(self, args, retmsg):
         # TODO: Ask user whether a database should be created or not.
         if not 'first_time' in self.nv:
-            introduction_msg = '''ImgurVacuum Copyright (C) 2013 Tobias Jansson
+            introduction_msg = '''ImgurVacuum Copyright (C) 2014 Tobias Jansson
 License GPLv3: GNU GPL version 3 <http://gnu.org/licenses/gpl.html>.
 This is free software: you are free to change and redistribute it.
 There is NO WARRANTY, to the extent permitted by law.
- 
+
 Looks like this is the first time you loaded this module.
 To make it working, you'll need to set it up.
 Send "help" to me and I'll send you instructions back.
@@ -48,7 +48,7 @@ You won't see this message again.'''
         # A regex for capturing URLs
         self.urlRegex = re.compile(r"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'\".,<>?«»“”‘’]))", re.IGNORECASE | re.DOTALL)
         # The "helpers" need to be refreshed
-        self.refresh_helpers() 
+        self.refresh_helpers()
         return True
 
     def OnModuleUnloading(self, mod, success, retmsg):
@@ -69,7 +69,7 @@ You won't see this message again.'''
         usage_msg = '''Usage instructions.
 Warning: There is no error checking done. Things can and probably will go horribly awry.
 The new value will be printed, so you should be able to spot mistakes.
- 
+
 Commands (they take either 0 or 1 argument, argument is between ||):
 client_id |<imgur client_id>| will update the Imgur client_id
 channel |#<channel>| will update the monitored channel name. Note that # should be included.
@@ -87,36 +87,57 @@ help || will print this message again.'''
         # TODO: multichannel support
         # Very easy to do, but it also requires the database to be rethought
         if channel.GetName() == self.nv["channel"]:
-            # TODO: regex matching can be expensive. Might wanna check for imgur first(?)
             match = self.urlRegex.findall(message.s)
             for i in match[0]:
                 # Only non-empty imgur links allowed
                 if len(i) > 0 and i.find("imgur") != -1:
-                    try:
-                        resp = self.im.get_at_url(i)
-                    except requests.exceptions.HTTPError: # Possibly a 404 because of a invalid link
-                        self.PutIRC("PRIVMSG "+self.nv["channel"]+" :HTTP error, possibly because of a invalid URL.")
+                    fetch = self.fetch_imgur(i)
+                    if fetch["success"]:
+                        fetch = fetch["response"]
+                    else:
+                        self.msg_channel(fetch["response"])
                         continue
-                    db_entry = (nick.GetNick(), resp.link, int(time.time()), "" if resp.title is None else str(resp.title))
-                    # Query DB to see whether the link has been posted already
-                    # sqlite.execute() must be provided a tuple
-                    res = self.linkdb.execute("SELECT * FROM imgur WHERE link=? LIMIT 1", (db_entry[1],)).fetchall()
-                    # Link hasn't been posted already
-                    if len(res) == 0:
+                    db_entry = (nick.GetNick(), fetch.link, int(time.time()),
+                                fetch.title if fetch.title else "")
+                    duplicate_res = self.duplicate_imgur(db_entry)
+                    if duplicate_res["duplicate"]:
+                        # Duplicate link
+                        duplicate_res = duplicate_res["response"]
+                        if nick.GetNick() == duplicate_res[0][1]:
+                            self.msg_channel("This link has already been submitted by you!")
+                        else:
+                            self.msg_channel("%s sent a duplicate link! OP: %s" % (db_entry[0], duplicate_res[0][1]))
+                    else:
                         try:
                             self.linkdb.execute("INSERT INTO imgur VALUES (NULL, ?, ?, ?, ?)", db_entry)
                             self.linkdb.commit()
                         except sqlite3.OperationalError as e:
                             # Most likely the DB is already open
                             self.PutModule("Sqlite error: %s" % str(e))
-                            self.PutIRC("PRIVMSG "+self.nv["channel"]+" :A SQLite error occurred.")
+                            self.msg_channel("An SQLite error occurred.")
                         # Only post the title if we actually have it
                         if len(db_entry[3]) > 0:
-                            self.PutIRC("PRIVMSG "+self.nv["channel"]+" :Imgur title: %s" % db_entry[3])
-                    else:
-                        # Duplicate link
-                        if nick.GetNick() == res[0][1]:
-                            self.PutIRC("PRIVMSG "+self.nv["channel"]+" :This link has already been submitted by you!")
+                            self.msg_channel("Imgur: %s" % db_entry[3])
                         else:
-                            self.PutIRC("PRIVMSG "+self.nv["channel"]+" :%s sent a duplicate link! OP: %s" % (db_entry[0], res[0][1]))
+                            self.msg_channel("No Imgur title available")
         return znc.CONTINUE
+
+    def msg_channel(self, msg):
+        self.PutIRC("PRIVMSG "+self.nv["channel"]+" :%s" % str(msg))
+
+    def fetch_imgur(self, url):
+        try:
+            resp = {"success": True,
+                    "response": self.im.get_at_url(url)}
+        except requests.exceptions.HTTPError: # Possibly a 404 because of a invalid link
+            resp = {"success": False,
+                    "response": "Error retrieving URL. Has the link 404'd?"}
+        return resp
+
+    def duplicate_imgur(self, entry):
+        # Query DB to see whether the link has been posted already
+        # sqlite.execute() must be provided a tuple
+        res = self.linkdb.execute("SELECT * FROM imgur WHERE link=? LIMIT 1", (entry[1],)).fetchall()
+        # Link has not been posted already
+        return {"duplicate": len(res) > 0,
+                "response": res}
